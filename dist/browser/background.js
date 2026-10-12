@@ -15,7 +15,7 @@ var Client = class {
     const s = await this.read();
     const url = s.url || defaults.url;
     if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(url)) throw Error("Use an HTTPS Supabase project URL without a trailing slash");
-    const r = await this.request(url + path, { ...init, headers: { apikey: s.key || defaults.key, "Content-Type": "application/json", ...init.headers } });
+    const r = await this.request(url + path, { signal: AbortSignal.timeout(2e4), ...init, headers: { apikey: s.key || defaults.key, "Content-Type": "application/json", ...init.headers } });
     if (!r.ok) throw Error(`Request failed (${r.status}): ${(await r.text()).slice(0, 250)}`);
     return r.status === 204 ? null : r.json();
   }
@@ -77,7 +77,7 @@ async function zoteroMatch(c, settings) {
   const matches = /* @__PURE__ */ new Map();
   for (const q of [c.doi, c.pmid, c.pmcid].filter(Boolean)) {
     for (let start = 0; ; start += 100) {
-      const r = await fetch(`https://api.zotero.org/users/${settings.zoteroUser}/items/top?format=json&qmode=everything&q=${encodeURIComponent(q)}&limit=100&start=${start}`, { headers: { "Zotero-API-Key": settings.zoteroKey, "Zotero-API-Version": "3" } });
+      const r = await fetch(`https://api.zotero.org/users/${settings.zoteroUser}/items/top?format=json&qmode=everything&q=${encodeURIComponent(q)}&limit=100&start=${start}`, { signal: AbortSignal.timeout(15e3), headers: { "Zotero-API-Key": settings.zoteroKey, "Zotero-API-Version": "3" } });
       if (!r.ok) throw Error("Zotero lookup failed: " + r.status);
       const items = await r.json();
       for (const item2 of items) if (matchesPaper(c, item2.data)) matches.set(item2.key, item2);
@@ -98,9 +98,30 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({ id: "highlight", title: "Highlight with Excerptide", contexts: ["selection"] });
   chrome.alarms.create("sync", { periodInMinutes: 1 });
 });
+async function status(message, error = false) {
+  await chrome.storage.local.set({ lastAction: { message, error, at: Date.now() } });
+  await chrome.action.setBadgeText({ text: error ? "!" : "" });
+  await chrome.action.setBadgeBackgroundColor({ color: "#b42318" });
+}
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === "highlight" && tab?.id) chrome.tabs.sendMessage(tab.id, { type: "capture" }).catch(() => {
-  });
+  if (info.menuItemId !== "highlight" || !tab?.id) return;
+  void (async () => {
+    try {
+      if (info.frameId) throw Error("Open this article in its own tab; embedded frames are not supported.");
+      try {
+        const ping = await chrome.tabs.sendMessage(tab.id, { type: "ping" });
+        if (!ping?.ok) throw Error("No active content script");
+      } catch {
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+      }
+      await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ["highlights.css"] });
+      const result = await chrome.tabs.sendMessage(tab.id, { type: "capture" });
+      if (result?.error) throw Error(result.error);
+      if (!result?.ok) throw Error("Refresh this article tab, then select the passage again.");
+    } catch (e) {
+      await status(e.message + " \u2014 open Excerptide for details.", true);
+    }
+  })();
 });
 var serial = Promise.resolve();
 function locked(fn) {
@@ -119,8 +140,21 @@ async function sync() {
       await client.save(c);
       queue = queue.filter((x) => x.id !== c.id);
       await chrome.storage.local.set({ [key]: queue });
-    } catch {
+      await status("Clipping saved to Supabase. Refresh the dashboard or sync Obsidian.");
+    } catch (e) {
+      await status("Clipping is queued locally. Sync failed: " + e.message, true);
       break;
+    }
+    if (s.zoteroUser && s.zoteroKey) {
+      try {
+        const z = await zoteroMatch(c, s);
+        if (z) {
+          await client.update(c.id, { zotero: z });
+          await status(z.status === "matched" ? "Clipping saved and linked to Zotero." : z.status === "ambiguous" ? "Clipping saved; multiple Zotero items match." : "Clipping saved; no exact identifier match in the online Zotero library.");
+        }
+      } catch (e) {
+        await status("Clipping saved; Zotero linking failed: " + e.message, true);
+      }
     }
   }
 }
@@ -171,9 +205,9 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
         const q = (await chrome.storage.local.get(key))[key] || [];
         q.push(c);
         await chrome.storage.local.set({ [key]: q });
-        await sync();
-        const remaining = (await chrome.storage.local.get(key))[key] || [];
-        return { clip: c, pending: remaining.some((x) => x.id === c.id) };
+        await status("Highlight queued locally; syncing\u2026");
+        void locked(sync);
+        return { clip: c, pending: true };
       });
     }
     if (m.type === "zotero" && trusted) {

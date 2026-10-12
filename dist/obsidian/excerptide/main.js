@@ -41,7 +41,7 @@ var Client = class {
     const s = await this.read();
     const url2 = s.url || defaults.url;
     if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(url2)) throw Error("Use an HTTPS Supabase project URL without a trailing slash");
-    const r = await this.request(url2 + path, { ...init, headers: { apikey: s.key || defaults.key, "Content-Type": "application/json", ...init.headers } });
+    const r = await this.request(url2 + path, { signal: AbortSignal.timeout(2e4), ...init, headers: { apikey: s.key || defaults.key, "Content-Type": "application/json", ...init.headers } });
     if (!r.ok) throw Error(`Request failed (${r.status}): ${(await r.text()).slice(0, 250)}`);
     return r.status === 204 ? null : r.json();
   }

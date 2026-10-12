@@ -43,7 +43,7 @@ $("sync").onclick = task(async () => {
   await send({ type: "sync" });
   const s = (await chrome.storage.local.get("settings")).settings;
   const q = (await chrome.storage.local.get("queue:" + s.session.user.id))["queue:" + s.session.user.id] || [];
-  $("status").textContent = q.length ? `${q.length} clipping(s) still pending. Check your connection.` : "All queued clippings saved.";
+  $("status").textContent = q.length ? `${q.length} clipping(s) pending. ${(await chrome.storage.local.get("lastAction")).lastAction?.message || ""}` : "All queued clippings saved.";
 });
 $("zotero").onclick = task(async () => {
   const s = (await chrome.storage.local.get("settings")).settings || {};
@@ -53,3 +53,11 @@ $("zotero").onclick = task(async () => {
   $("status").textContent = `${r.count} clipping(s) linked. No exact match or duplicate matches remain unlinked.`;
 });
 void render();
+async function showLastAction() {
+  const { lastAction } = await chrome.storage.local.get("lastAction");
+  if (lastAction) $("status").textContent = lastAction.message;
+}
+void showLastAction();
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.lastAction) void showLastAction();
+});
