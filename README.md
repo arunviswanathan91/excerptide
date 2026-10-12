@@ -2,7 +2,7 @@
 
 **Highlight once. Keep it connected.**
 
-A Chrome/Edge extension and Obsidian plugin for research clippings, backed by the same Supabase account as your personal dashboard. Version 0.1.0 is an installable alpha, not yet a browser-store or Obsidian Community Plugins listing.
+A Chrome/Edge extension and Obsidian plugin for research clippings, backed by the same Supabase account as your personal dashboard. Version 0.1.3 is an installable alpha, not yet a browser-store or Obsidian Community Plugins listing.
 
 ## Install — no build required
 
@@ -24,9 +24,11 @@ On temporary network failures, clippings remain in an account-specific local ret
 2. Copy `main.js` and `manifest.json` from `dist/obsidian/excerptide/` into that folder.
 3. Reload Obsidian. In Settings → Community plugins, enable **Excerptide Sync**. You may need to disable Restricted mode to run community plugins.
 4. Open Excerptide settings, sign in with the same dashboard account, and click **Sync now**.
-5. Notes appear in `Excerptide/<account-id>/`. Sync repeats every minute while Obsidian is open. The command palette also offers **Excerptide Sync: Sync clippings**.
+5. Notes appear directly in `Excerptide/`, named after the paper title. Sync repeats every minute while Obsidian is open. The command palette also offers **Excerptide Sync: Sync clippings**.
 
-Each clipping has its own stable Markdown file. The managed block contains its excerpt, source links, identifiers, dashboard note, tags, and Zotero link. Write your own content below **My notes**: sync preserves everything outside the managed block. It does not push vault edits back to Supabase or delete local notes when remote records disappear. Removing managed markers opts that file out of updates.
+Each clipping has a Markdown file named after the paper title. There is no duplicate title heading, visible UUID, or sync boundary marker. The excerpt, source links, identifiers, dashboard note, tags, and Zotero link remain in the body. Write your own content below **My notes**. Synchronization bookkeeping lives only in the plugin data.json. If you edit the imported content, sync preserves that file rather than overwriting your changes. It does not push vault edits back to Supabase or delete local notes when remote records disappear.
+
+Version 0.1.3 migrates old UUID filenames on the next sync, preserving text outside the old boundaries, and removes the empty UUID account folder. Files with removed legacy markers are left untouched. Duplicate paper titles receive a simple `(2)` suffix; filesystem-forbidden characters are replaced with spaces and excessively long filenames are shortened. Keep the plugin data.json when updating.
 
 ### Personal dashboard
 
@@ -36,9 +38,9 @@ Open [your dashboard’s Clippings section](https://arunviswanathan91.github.io/
 
 1. Create a dedicated **read-only** personal-library key at <https://www.zotero.org/settings/keys/new>.
 2. Enter that key and your numeric Zotero user ID in the extension’s **Connection settings**.
-3. On a clipped paper’s page, open Excerptide and click **Match this page to Zotero**.
+3. Newly saved clippings are matched automatically when these settings are present. To retry existing clippings, open their page and click **Match this page to Zotero**.
 
-The extension searches your online Zotero library and accepts an exact DOI, PMID, or PMCID match. PMID/PMCID must be present in Zotero’s Extra field as `PMID: ...` or `PMCID: PMC...`. Sync Zotero Desktop with Zotero online first. Duplicate exact matches are marked ambiguous rather than guessed; absent matches remain unlinked. Title-only suggestions, manual item selection, group libraries, and automatic background reference matching are not yet implemented.
+The extension searches your online Zotero library and accepts an exact DOI, PMID, or PMCID match. PMID/PMCID must be present in Zotero’s Extra field as `PMID: ...` or `PMCID: PMC...`. Sync Zotero Desktop with Zotero online first. Duplicate exact matches are marked ambiguous rather than guessed; absent matches remain unlinked. Title-only suggestions, manual item selection, and group libraries are not yet implemented.
 
 The saved Zotero item link appears in the dashboard and imported Obsidian note. It selects the library item in Zotero Desktop; it does not create PDF annotations. The Zotero key stays in browser-local extension storage, never in Supabase or webpage scripts.
 
@@ -78,3 +80,7 @@ For a different Supabase project, apply `sql/setup.sql` once and change connecti
 ## Verification
 
 Automated tests cover cross-element selection, page changes, duplicate passages, URL preservation, exact reference matching, Markdown escaping, refreshed sessions, and account isolation in queued writes. The dashboard’s existing checks and production build also pass. Live database verification uses transaction rollback and checks owner writes plus denial of other-user reads. End-to-end use with your own Obsidian vault and Zotero account requires local installation and sign-in.
+
+## Troubleshooting capture
+
+Version 0.1.3 repairs missing content scripts on a right-click capture, displays the highlight after the local queue is saved without waiting for the server, and shows the last save or sync error in the extension popup. A red `!` badge means the popup has an error to inspect. After replacing extension files, reload the extension and refresh article tabs. PDF viewers and embedded frames remain unsupported. A Zotero link selects an existing reference; Excerptide does not write a new note or highlight into Zotero itself.

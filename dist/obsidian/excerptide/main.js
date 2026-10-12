@@ -32,7 +32,7 @@ function highlightLink(c) {
   return u.href;
 }
 var Client = class {
-  constructor(read, write, request = fetch) {
+  constructor(read, write, request = (...args) => globalThis.fetch(...args)) {
     this.read = read;
     this.write = write;
     this.request = request;
@@ -41,7 +41,7 @@ var Client = class {
     const s = await this.read();
     const url2 = s.url || defaults.url;
     if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(url2)) throw Error("Use an HTTPS Supabase project URL without a trailing slash");
-    const r = await this.request(url2 + path, { ...init, headers: { apikey: s.key || defaults.key, "Content-Type": "application/json", ...init.headers } });
+    const r = await this.request(url2 + path, { signal: AbortSignal.timeout(2e4), ...init, headers: { apikey: s.key || defaults.key, "Content-Type": "application/json", ...init.headers } });
     if (!r.ok) throw Error(`Request failed (${r.status}): ${(await r.text()).slice(0, 250)}`);
     return r.status === 204 ? null : r.json();
   }
@@ -115,6 +115,14 @@ Saved: ${escape(c.created_at)}
 
 ${c.doi ? "DOI: " + escape(c.doi) + "\n\n" : ""}${c.pmid ? "PMID: " + escape(c.pmid) + "\n\n" : ""}${c.pmcid ? "PMCID: " + escape(c.pmcid) + "\n\n" : ""}${c.zotero?.url ? "[Open in Zotero](<" + url(c.zotero.url) + ">)\n\n" : ""}${c.tags?.length ? "Tags: " + c.tags.map(escape).join(", ") + "\n\n" : ""}${c.notes ? "Clipping note: " + escape(c.notes) + "\n\n" : ""}<!-- excerptide:end -->`;
 }
+function noteBody(c, link) {
+  return markdown(c, link).replace(/^<!-- excerptide:start -->\n# [^\n]*\n\n/, "").replace(/\n<!-- excerptide:end -->$/, "");
+}
+function noteName(title) {
+  let name = String(title || "Untitled clipping").replace(/[\\/:*?"<>|\[\]#^\r\n]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "");
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(name)) name += " paper";
+  return (name || "Untitled clipping").slice(0, 160).trim();
+}
 
 // obsidian/main.js
 async function transport(url2, init = {}) {
@@ -136,36 +144,55 @@ var Excerptide = class extends import_obsidian.Plugin {
     }, 6e4));
   }
   async sync(notify = true) {
+    var _a, _b;
     if (this.syncing) return;
     this.syncing = true;
     try {
       const clips = await this.client.list();
       const base = this.settings.folder || "Excerptide";
       if (base.split(/[\\/]/).some((x) => x === "..") || base.startsWith("/")) throw Error("Choose a relative vault folder");
-      const folder = (0, import_obsidian.normalizePath)(base + "/" + this.settings.session.user.id);
+      const folder = (0, import_obsidian.normalizePath)(base), owner = this.settings.session.user.id;
       let path = "";
       for (const part of folder.split("/")) {
         path = path ? path + "/" + part : part;
         if (!this.app.vault.getAbstractFileByPath(path)) await this.app.vault.createFolder(path);
       }
-      let count = 0;
+      (_a = this.settings).noteIndex ?? (_a.noteIndex = {});
+      const indexKey = (this.settings.url || defaults.url) + "|" + owner;
+      const index = (_b = this.settings.noteIndex)[indexKey] ?? (_b[indexKey] = {});
+      let count = 0, skipped = 0;
       for (const c of clips) {
-        const file = (0, import_obsidian.normalizePath)(folder + "/" + c.id + ".md");
-        const content = markdown(c, highlightLink(c));
-        const existing = this.app.vault.getAbstractFileByPath(file);
+        const previous = index[c.id];
+        const legacy = (0, import_obsidian.normalizePath)(folder + "/" + owner + "/" + c.id + ".md");
+        let existing = previous ? this.app.vault.getAbstractFileByPath(previous.path) : null;
+        if (!existing) existing = this.app.vault.getAbstractFileByPath(legacy);
+        const content = noteBody(c, highlightLink(c));
+        let next = content + "\n\n## My notes\n\n";
         if (existing) {
           const old = await this.app.vault.read(existing);
           const start = "<!-- excerptide:start -->", end = "<!-- excerptide:end -->";
           const a = old.indexOf(start), b = old.indexOf(end);
-          if (a < 0 || b < a) {
+          if (a >= 0 && b > a) next = old.slice(0, a) + content + old.slice(b + end.length);
+          else if (previous?.content && old.startsWith(previous.content)) next = content + old.slice(previous.content.length);
+          else {
+            skipped++;
             continue;
           }
-          const next = old.slice(0, a) + content + old.slice(b + end.length);
-          if (next !== old) await this.app.vault.modify(existing, next);
-        } else await this.app.vault.create(file, content + "\n\n## My notes\n\n");
+        }
+        const stem = noteName(c.title);
+        let target = (0, import_obsidian.normalizePath)(folder + "/" + stem + ".md"), number = 2;
+        while (this.app.vault.getAbstractFileByPath(target) && this.app.vault.getAbstractFileByPath(target)?.path !== existing?.path) target = (0, import_obsidian.normalizePath)(folder + "/" + stem + " (" + number++ + ").md");
+        if (existing) {
+          if (await this.app.vault.read(existing) !== next) await this.app.vault.modify(existing, next);
+          if (existing.path !== target) await this.app.fileManager.renameFile(existing, target);
+        } else await this.app.vault.create(target, next);
+        index[c.id] = { path: target, content };
+        await this.saveData(this.settings);
         count++;
       }
-      if (notify) new import_obsidian.Notice(`Excerptide: ${count} clippings synced. Your notes were preserved.`);
+      const oldFolder = this.app.vault.getAbstractFileByPath((0, import_obsidian.normalizePath)(folder + "/" + owner));
+      if (oldFolder && Array.isArray(oldFolder.children) && oldFolder.children.length === 0) await this.app.vault.delete(oldFolder);
+      if (notify) new import_obsidian.Notice(`Excerptide: ${count} clippings synced.${skipped ? " " + skipped + " locally edited notes preserved without overwriting." : " Your notes were preserved."}`);
     } catch (e) {
       if (notify) new import_obsidian.Notice(e.message);
       console.warn("Excerptide sync failed");
@@ -184,7 +211,7 @@ var Settings = class extends import_obsidian.PluginSettingTab {
     const { containerEl: el } = this;
     el.empty();
     el.createEl("h2", { text: "Excerptide Sync" });
-    el.createEl("p", { text: "Sign in using your dashboard account. Sync imports clippings every minute while Obsidian is open. Edits inside the managed block are replaced; write below \u201CMy notes\u201D. Local notes are never deleted by sync." });
+    el.createEl("p", { text: "Sign in using your dashboard account. Sync imports clippings every minute while Obsidian is open. Paper titles are used as filenames. Write below \u201CMy notes\u201D; if you edit the imported excerpt itself, sync preserves that file rather than overwriting it. Local notes are never deleted by sync." });
     el.createEl("p", { text: "Session tokens are stored in this plugin\u2019s local data.json. Do not publish or share that file. Use a publishable Supabase key only." });
     for (const [key, label] of [["url", "Supabase URL"], ["key", "Publishable key"], ["folder", "Vault folder"]]) new import_obsidian.Setting(el).setName(label).addText((t) => t.setValue(p.settings[key]).onChange(async (v) => {
       if (key !== "folder") delete p.settings.session;
