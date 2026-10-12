@@ -115,6 +115,7 @@
         const range = sel?.rangeCount && !sel.isCollapsed ? sel.getRangeAt(0) : selectionRange;
         if (!range) throw Error("Select a passage first");
         const anchor = capture(range, document);
+        anchor.authors = [...document.querySelectorAll('meta[name="citation_author"]')].map((el) => el.content?.trim()).filter(Boolean);
         const original_url = location.href;
         const pmid = meta("citation_pmid") || (location.hostname === "pubmed.ncbi.nlm.nih.gov" ? location.pathname.match(/^\/(\d+)/)?.[1] : null);
         const pmcid = meta("citation_pmcid") || location.pathname.match(/\bPMC\d+\b/)?.[0] || null;

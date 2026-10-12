@@ -86,7 +86,7 @@ async function zoteroMatch(c, settings) {
   }
   if (matches.size !== 1) return { status: matches.size ? "ambiguous" : "unmatched" };
   const item = [...matches.values()][0];
-  return { status: "matched", key: item.key, user: settings.zoteroUser, title: item.data.title, url: `zotero://select/library/items/${item.key}` };
+  return { status: "matched", key: item.key, user: settings.zoteroUser, title: item.data.title, authors: (item.data.creators || []).filter((x) => x.creatorType === "author").map((x) => x.lastName || x.name || x.firstName).filter(Boolean), url: `zotero://select/library/items/${item.key}` };
 }
 
 // browser/background.js
