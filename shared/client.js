@@ -2,7 +2,7 @@ export const defaults={url:'https://iskuiqwevqdnulksmgbc.supabase.co',key:'sb_pu
 export function pageKey(url){const u=new URL(url);u.hash='';return u.href;}
 export function highlightLink(c){const u=new URL(c.original_url);u.hash=`excerptide=${c.id}`;return u.href;}
 export class Client {
- constructor(read,write,request=fetch){this.read=read;this.write=write;this.request=request;}
+ constructor(read,write,request=(...args)=>globalThis.fetch(...args)){this.read=read;this.write=write;this.request=request;}
  async raw(path,init={}){const s=await this.read();const url=s.url||defaults.url;if(!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(url))throw Error('Use an HTTPS Supabase project URL without a trailing slash');const r=await this.request(url+path,{...init,headers:{apikey:s.key||defaults.key,'Content-Type':'application/json',...init.headers}});if(!r.ok)throw Error(`Request failed (${r.status}): ${(await r.text()).slice(0,250)}`);return r.status===204?null:r.json();}
  async login(email,password){const session=await this.raw('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email,password})});await this.write({...await this.read(),session:{...session,expires_at:Date.now()/1000+session.expires_in}});}
  async token(){const s=await this.read();if(!s.session)throw Error('Sign in to Excerptide first');if(s.session.expires_at>Date.now()/1000+60)return s.session.access_token;if(!this.refreshing)this.refreshing=(async()=>{const v=await this.raw('/auth/v1/token?grant_type=refresh_token',{method:'POST',body:JSON.stringify({refresh_token:s.session.refresh_token})});await this.write({...await this.read(),session:{...v,expires_at:Date.now()/1000+v.expires_in}});return v.access_token;})().finally(()=>this.refreshing=null);return this.refreshing;}

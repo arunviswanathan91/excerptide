@@ -6,7 +6,7 @@ function pageKey(url) {
   return u.href;
 }
 var Client = class {
-  constructor(read2, write2, request = fetch) {
+  constructor(read2, write2, request = (...args) => globalThis.fetch(...args)) {
     this.read = read2;
     this.write = write2;
     this.request = request;

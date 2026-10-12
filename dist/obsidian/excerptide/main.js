@@ -32,7 +32,7 @@ function highlightLink(c) {
   return u.href;
 }
 var Client = class {
-  constructor(read, write, request = fetch) {
+  constructor(read, write, request = (...args) => globalThis.fetch(...args)) {
     this.read = read;
     this.write = write;
     this.request = request;
