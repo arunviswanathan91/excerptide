@@ -1,0 +1,8 @@
+import {pageKey} from '../shared/client.js';
+const $=id=>document.getElementById(id);async function render(){const s=(await chrome.storage.local.get('settings')).settings||{};$('login').hidden=!!s.session;$('signed').hidden=!s.session;$('account').textContent=s.session?.user.email||'';}
+async function send(m){$('status').textContent='Working…';const r=await chrome.runtime.sendMessage(m);if(r.error)throw Error(r.error);return r;}
+function task(fn){return async e=>{e?.preventDefault();try{await fn();await render();}catch(e){$('status').textContent=e.message;}};}
+$('login').onsubmit=task(async()=>{await send({type:'login',email:$('email').value,password:$('password').value});$('password').value='';$('status').textContent='Signed in. Revisit your article to restore highlights.';});
+$('logout').onclick=task(async()=>{await send({type:'logout'});$('status').textContent='Signed out. Local queued clippings remain tied to your account.';});
+$('sync').onclick=task(async()=>{await send({type:'sync'});const s=(await chrome.storage.local.get('settings')).settings;const q=(await chrome.storage.local.get('queue:'+s.session.user.id))['queue:'+s.session.user.id]||[];$('status').textContent=q.length?`${q.length} clipping(s) still pending. Check your connection.`:'All queued clippings saved.';});
+$('zotero').onclick=task(async()=>{const s=(await chrome.storage.local.get('settings')).settings||{};if(!s.zoteroUser||!s.zoteroKey)throw Error('Add your Zotero user ID and read-only API key in settings first.');const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const r=await send({type:'zotero',page:pageKey(tab.url)});$('status').textContent=`${r.count} clipping(s) linked. No exact match or duplicate matches remain unlinked.`;});void render();

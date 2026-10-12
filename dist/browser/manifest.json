@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Excerptide",
+  "version": "0.1.0",
+  "description": "Persistent research highlights connected to your dashboard, Obsidian and Zotero.",
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "alarms",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.supabase.co/*",
+    "https://api.zotero.org/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Excerptide"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
