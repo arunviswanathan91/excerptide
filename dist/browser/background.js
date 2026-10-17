@@ -210,6 +210,26 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
         return { clip: c, pending: true };
       });
     }
+    if (m.type === "delete" && (trusted || sender.tab)) {
+      return locked(async () => {
+        if (!/^[0-9a-f-]{36}$/i.test(m.id || "")) throw Error("Invalid clipping ID");
+        const s = await read();
+        if (!s.session) throw Error("Sign in to delete this highlight");
+        const page = pageKey(sender.tab ? sender.url : m.url);
+        const key = "queue:" + s.session.user.id;
+        await client.api("?id=eq." + encodeURIComponent(m.id) + "&page_key=eq." + encodeURIComponent(page), { method: "DELETE" });
+        const queue = (await chrome.storage.local.get(key))[key] || [];
+        await chrome.storage.local.set({ [key]: queue.filter((c) => !(c.id === m.id && c.page_key === page)) });
+        const cacheKey = "cache:" + s.session.user.id + ":" + page;
+        const cache = (await chrome.storage.local.get(cacheKey))[cacheKey] || [];
+        await chrome.storage.local.set({ [cacheKey]: cache.filter((c) => c.id !== m.id) });
+        await status("Highlight and saved clipping deleted.");
+        const tabId = sender.tab?.id || (trusted ? m.tabId : null);
+        if (tabId) await chrome.tabs.sendMessage(tabId, { type: "refresh" }).catch(() => {
+        });
+        return { ok: true };
+      });
+    }
     if (m.type === "zotero" && trusted) {
       const clips = await client.list(m.page);
       let count = 0;

@@ -25,6 +25,7 @@ function task(fn) {
     try {
       await fn();
       await render();
+      await listHighlights();
     } catch (e2) {
       $("status").textContent = e2.message;
     }
@@ -61,3 +62,45 @@ void showLastAction();
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.lastAction) void showLastAction();
 });
+async function listHighlights() {
+  const host = $("highlights");
+  host.replaceChildren();
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.url || !/^https?:/.test(tab.url)) {
+      host.textContent = "Open an article to manage its highlights.";
+      return;
+    }
+    const r = await chrome.runtime.sendMessage({ type: "list", url: tab.url });
+    if (r.error) throw Error(r.error);
+    if (!r.clips?.length) {
+      host.textContent = "No saved highlights on this page.";
+      return;
+    }
+    for (const c of r.clips) {
+      const row = document.createElement("div");
+      row.className = "highlight-row";
+      const quote = document.createElement("p");
+      quote.textContent = c.anchor.exact;
+      const button = document.createElement("button");
+      button.textContent = "Delete highlight";
+      button.onclick = async () => {
+        if (!confirm("Delete this highlight and its dashboard clipping? Existing Obsidian notes and Zotero references will be kept.")) return;
+        button.disabled = true;
+        try {
+          await send({ type: "delete", id: c.id, url: tab.url, tabId: tab.id });
+          $("status").textContent = "Highlight and clipping deleted.";
+          await listHighlights();
+        } catch (e) {
+          $("status").textContent = "Could not delete: " + e.message;
+          button.disabled = false;
+        }
+      };
+      row.append(quote, button);
+      host.append(row);
+    }
+  } catch (e) {
+    host.textContent = e.message;
+  }
+}
+void listHighlights();
