@@ -2,7 +2,7 @@
 
 **Highlight once. Keep it connected.**
 
-A Chrome/Edge extension and Obsidian plugin for research clippings, backed by the same Supabase account as your personal dashboard. Version 0.1.3 is an installable alpha, not yet a browser-store or Obsidian Community Plugins listing.
+A Chrome/Edge extension and Obsidian plugin for research clippings, backed by the same Supabase account as your personal dashboard. Version 0.1.4 is an installable alpha, not yet a browser-store or Obsidian Community Plugins listing.
 
 ## Install — no build required
 
@@ -84,3 +84,7 @@ Automated tests cover cross-element selection, page changes, duplicate passages,
 ## Troubleshooting capture
 
 Version 0.1.3 repairs missing content scripts on a right-click capture, displays the highlight after the local queue is saved without waiting for the server, and shows the last save or sync error in the extension popup. A red `!` badge means the popup has an error to inspect. After replacing extension files, reload the extension and refresh article tabs. PDF viewers and embedded frames remain unsupported. A Zotero link selects an existing reference; Excerptide does not write a new note or highlight into Zotero itself.
+
+## Delete a clipping
+
+Click an existing webpage highlight to show **Delete highlight**, or open the extension popup and use the delete button beside its excerpt under **Highlights on this page**. The dashboard also has a separate **Delete** action on every clipping card. Confirming either action removes the saved clipping and its browser highlight. Deletion requires a valid session and connection; failed requests retain your data. The extension also removes the matching retry-queue and cached entries after successful deletion. Dashboard deletions disappear from open article tabs on refresh, tab activation, or the next visible-tab refresh (up to one minute). Existing Obsidian Markdown files and Zotero library items are preserved.

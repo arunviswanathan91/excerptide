@@ -1,1 +1,3 @@
 :root{font:15px system-ui;color:#193437;background:#f5f4ef}body{margin:0;padding:24px;min-width:320px;max-width:640px}h1{letter-spacing:-1px;margin:0 0 6px}p{line-height:1.5;color:#526566}label{display:block;margin:15px 0 5px}input{box-sizing:border-box;width:100%;padding:10px;border:1px solid #bac9c5;border-radius:7px}button,a.button{display:inline-block;background:#235e57;color:white;padding:10px 15px;border:0;border-radius:8px;margin:12px 6px 0 0;cursor:pointer}a{color:#235e57}#status{white-space:pre-wrap;line-height:1.5}small{color:#526566}
+
+h2{font-size:14px}.highlight-row{border-top:1px solid #bac9c5;padding:8px 0}.highlight-row p{font-size:12px;max-height:90px;overflow:auto;margin:0}.highlight-row button{background:#a33030;font-size:12px;padding:6px 10px}
