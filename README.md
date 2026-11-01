@@ -12,7 +12,7 @@ Download this repository using **Code → Download ZIP**, extract it, and keep t
 
 1. Open `chrome://extensions` or `edge://extensions`.
 2. Enable **Developer mode**, choose **Load unpacked**, and select `dist/browser` (the folder containing `manifest.json`).
-3. Pin Excerptide to the toolbar. Open it and sign in with your existing personal-dashboard email and password. The correct Supabase connection is prefilled.
+3. Pin Excerptide to the toolbar. Open it and sign in with your existing personal-dashboard email and password. The Supabase connection is built in and not displayed.
 4. Refresh any article tabs opened before installation. Select text, right-click → **Highlight with Excerptide**, or press **Alt + Shift + H**.
 5. The passage becomes yellow immediately after it is saved or queued. Refreshing or revisiting the same page restores the highlight.
 
@@ -88,3 +88,7 @@ Version 0.1.3 repairs missing content scripts on a right-click capture, displays
 ## Delete a clipping
 
 Click an existing webpage highlight to show **Delete highlight**, or open the extension popup and use the delete button beside its excerpt under **Highlights on this page**. The dashboard also has a separate **Delete** action on every clipping card. Confirming either action removes the saved clipping and its browser highlight. Deletion requires a valid session and connection; failed requests retain your data. The extension also removes the matching retry-queue and cached entries after successful deletion. Dashboard deletions disappear from open article tabs on refresh, tab activation, or the next visible-tab refresh (up to one minute). Existing Obsidian Markdown files and Zotero library items are preserved.
+
+## Notes and tables
+
+After you highlight, a small box offers an optional note. Notes are saved to the dashboard (and imported into Obsidian) and are never shown on the web page. Click an existing highlight to add or edit its note. Selecting across two or more table cells, or a whole table, saves the table itself as structured cells (shown as a table in the dashboard and a Markdown table in Obsidian) instead of jumbled text; a selection inside one cell stays a normal text highlight. Figures are not captured.

@@ -4,7 +4,7 @@ var defaults = { url: "https://iskuiqwevqdnulksmgbc.supabase.co", key: "sb_publi
 // browser/options.js
 var ids = ["url", "key", "zoteroUser", "zoteroKey"];
 var s = (await chrome.storage.local.get("settings")).settings || {};
-for (const id of ids) document.getElementById(id).value = s[id] || defaults[id] || "";
+for (const id of ids) document.getElementById(id).value = s[id] && s[id] !== defaults[id] ? s[id] : "";
 document.getElementById("settings").onsubmit = async (e) => {
   e.preventDefault();
   const next = { ...(await chrome.storage.local.get("settings")).settings };
@@ -14,7 +14,9 @@ document.getElementById("settings").onsubmit = async (e) => {
     document.getElementById("status").textContent = "Use a publishable key, never a secret key.";
     return;
   }
-  if (next.url !== s.url || next.key !== s.key) delete next.session;
+  if (!next.url || next.url === defaults.url) delete next.url;
+  if (!next.key || next.key === defaults.key) delete next.key;
+  if ((next.url || defaults.url) !== (s.url || defaults.url) || (next.key || defaults.key) !== (s.key || defaults.key)) delete next.session;
   await chrome.storage.local.set({ settings: next });
   document.getElementById("status").textContent = "Saved. Sign in again if you changed the connection.";
 };

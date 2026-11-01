@@ -69,6 +69,44 @@
     return r;
   }
 
+  // shared/table.js
+  var MAX_ROWS = 300;
+  var MAX_COLS = 40;
+  var MAX_JSON = 8e4;
+  var clean = (s) => s.replace(/\s+/g, " ").trim();
+  function cellText(cell) {
+    const copy = cell.cloneNode(true);
+    copy.querySelectorAll("script,style,[data-excerptide-ui]").forEach((n) => n.remove());
+    copy.querySelectorAll("br").forEach((n) => n.replaceWith(" "));
+    return clean(copy.textContent);
+  }
+  function selectedTable(range) {
+    let node = range.commonAncestorContainer;
+    if (node.nodeType === 3) node = node.parentElement;
+    if (!node) return null;
+    let table = node.closest?.("table");
+    if (table) {
+      if ([...table.querySelectorAll("td,th")].filter((c) => range.intersectsNode(c)).length < 2) return null;
+    } else {
+      table = [...node.querySelectorAll?.("table") || []].find((t) => !t.parentElement?.closest("table") && range.intersectsNode(t));
+      if (!table || range.toString().length > (table.textContent || "").length + 5) return null;
+    }
+    return table.querySelector("table") ? null : table;
+  }
+  function serializeTable(table) {
+    const rows = [...table.rows];
+    if (!rows.length || rows.length > MAX_ROWS) return null;
+    const data = { caption: clean(table.caption?.textContent || ""), rows: rows.map((r) => [...r.cells].map((c) => {
+      const o = { t: cellText(c) };
+      if (c.tagName === "TH") o.h = 1;
+      if (c.colSpan > 1) o.cs = Math.min(c.colSpan, MAX_COLS);
+      if (c.rowSpan > 1) o.rs = Math.min(c.rowSpan, MAX_ROWS);
+      return o;
+    })) };
+    if (!data.rows.some((r) => r.length) || data.rows.some((r) => r.reduce((n, c) => n + (c.cs || 1), 0) > MAX_COLS) || JSON.stringify(data).length > MAX_JSON) return null;
+    return data;
+  }
+
   // browser/content.js
   if (!globalThis.__excerptideLoaded) {
     let notice = function(text) {
@@ -96,6 +134,64 @@
         if (el?.content) return el.content;
       }
       return null;
+    }, noteBox = function(clip) {
+      document.querySelectorAll("[data-excerptide-note]").forEach((n) => n.remove());
+      const box = document.createElement("div");
+      box.dataset.excerptideUi = "true";
+      box.dataset.excerptideNote = "true";
+      Object.assign(box.style, { position: "fixed", bottom: "80px", right: "24px", width: "320px", maxWidth: "calc(100vw - 48px)", background: "#fff", color: "#172e31", padding: "14px", border: "1px solid #ccc", borderRadius: "12px", boxShadow: "0 4px 24px #0004", zIndex: "2147483647", font: "13px system-ui" });
+      const label = document.createElement("div");
+      label.textContent = "Add a note (saved to your dashboard, not shown on this page)";
+      label.style.marginBottom = "8px";
+      const area = document.createElement("textarea");
+      area.value = clip.notes || "";
+      area.maxLength = 1e4;
+      Object.assign(area.style, { width: "100%", boxSizing: "border-box", minHeight: "70px", padding: "8px", font: "inherit", border: "1px solid #bac9c5", borderRadius: "6px", color: "#172e31", background: "#fff", resize: "vertical" });
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:8px;margin-top:8px;justify-content:flex-end";
+      const mk = (t, primary) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = t;
+        Object.assign(b.style, { padding: "7px 12px", border: primary ? "0" : "1px solid #ccc", borderRadius: "6px", cursor: "pointer", font: "inherit", background: primary ? "#235e57" : "#fff", color: primary ? "#fff" : "#172e31" });
+        return b;
+      };
+      const skip = mk("Skip", false), save2 = mk("Save note", true);
+      const close = () => box.remove();
+      const submit = async () => {
+        const notes = area.value.trim();
+        if (notes === (clip.notes || "")) {
+          close();
+          return;
+        }
+        save2.disabled = true;
+        try {
+          const r = await chrome.runtime.sendMessage({ type: "note", id: clip.id, notes });
+          if (r.error) throw Error(r.error);
+          clip.notes = notes;
+          const known = clips.find((x) => x.id === clip.id);
+          if (known) known.notes = notes;
+          close();
+          notice("Note saved");
+        } catch (e) {
+          save2.disabled = false;
+          notice("Could not save note: " + e.message);
+        }
+      };
+      skip.onclick = close;
+      save2.onclick = () => void submit();
+      area.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") close();
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          void submit();
+        }
+      }, true);
+      row.append(skip, save2);
+      box.append(label, area, row);
+      document.body.append(box);
+      area.focus({ preventScroll: true });
     };
     globalThis.__excerptideLoaded = true;
     let clips = [], timer, selectionRange;
@@ -114,7 +210,20 @@
         const sel = getSelection();
         const range = sel?.rangeCount && !sel.isCollapsed ? sel.getRangeAt(0) : selectionRange;
         if (!range) throw Error("Select a passage first");
-        const anchor = capture(range, document);
+        let anchor;
+        const table = selectedTable(range), tableData = table && serializeTable(table);
+        if (tableData) {
+          try {
+            const whole = document.createRange();
+            whole.selectNodeContents(table);
+            anchor = capture(whole, document);
+            if (anchor.exact.length > 1e5) throw Error("too long");
+            anchor.table = tableData;
+          } catch {
+            anchor = null;
+          }
+        }
+        if (!anchor) anchor = capture(range, document);
         anchor.authors = [...document.querySelectorAll('meta[name="citation_author"]')].map((el) => el.content?.trim()).filter(Boolean);
         const original_url = location.href;
         const pmid = meta("citation_pmid") || (location.hostname === "pubmed.ncbi.nlm.nih.gov" ? location.pathname.match(/^\/(\d+)/)?.[1] : null);
@@ -125,7 +234,8 @@
         clips.push(r.clip);
         paint();
         getSelection()?.removeAllRanges();
-        notice(r.pending ? "Highlighted \u2022 queued locally; will retry syncing" : "Highlighted \u2022 saved to your dashboard");
+        notice((anchor.table ? "Table highlighted" : "Highlighted") + (r.pending ? " \u2022 queued locally; will retry syncing" : " \u2022 saved to your dashboard"));
+        noteBox(r.clip);
         return { ok: true };
       } catch (e) {
         notice(e.message);
@@ -189,6 +299,16 @@
       deleteMenu.dataset.excerptideUi = "true";
       Object.assign(deleteMenu.style, { position: "fixed", left: Math.max(8, Math.min(event.clientX, innerWidth - 280)) + "px", top: Math.max(8, Math.min(event.clientY + 12, innerHeight - 180)) + "px", zIndex: "2147483647", background: "#fff", color: "#172e31", padding: "12px", border: "1px solid #ccc", borderRadius: "10px", boxShadow: "0 4px 20px #0003", maxWidth: "260px", maxHeight: "160px", overflow: "auto", font: "13px system-ui" });
       for (const c of matches) {
+        const noteButton = document.createElement("button");
+        noteButton.type = "button";
+        noteButton.textContent = matches.length === 1 ? c.notes ? "Edit note" : "Add note" : "Note: " + c.anchor.exact.slice(0, 55) + "\u2026";
+        Object.assign(noteButton.style, { display: "block", margin: "4px", padding: "8px", color: "#235e57", background: "#fff", border: "1px solid #ddd", borderRadius: "6px", cursor: "pointer" });
+        noteButton.onclick = () => {
+          deleteMenu?.remove();
+          deleteMenu = null;
+          noteBox(c);
+        };
+        deleteMenu.append(noteButton);
         const button = document.createElement("button");
         button.textContent = matches.length === 1 ? "Delete highlight" : "Delete: " + c.anchor.exact.slice(0, 55) + "\u2026";
         button.type = "button";

@@ -29,6 +29,16 @@ chrome.runtime.onMessage.addListener((m,sender,respond)=>{(async()=>{
   const tabId=sender.tab?.id||(trusted?m.tabId:null);if(tabId)await chrome.tabs.sendMessage(tabId,{type:'refresh'}).catch(()=>{});
   return {ok:true};
  });}
+ if(m.type==='note'&&(trusted||sender.tab)){return locked(async()=>{
+  if(!/^[0-9a-f-]{36}$/i.test(m.id||''))throw Error('Invalid clipping ID');
+  if(typeof m.notes!=='string'||m.notes.length>10000)throw Error('Note must be text under 10,000 characters');
+  const s=await read();if(!s.session)throw Error('Sign in to save a note');
+  const key='queue:'+s.session.user.id;const queue=(await chrome.storage.local.get(key))[key]||[];const queued=queue.some(c=>c.id===m.id);
+  if(queued)await chrome.storage.local.set({[key]:queue.map(c=>c.id===m.id?{...c,notes:m.notes}:c)});else await client.update(m.id,{notes:m.notes});
+  const all=await chrome.storage.local.get(null);const patch={};for(const [k,v] of Object.entries(all))if(k.startsWith('cache:'+s.session.user.id+':')&&Array.isArray(v))patch[k]=v.map(c=>c.id===m.id?{...c,notes:m.notes}:c);if(Object.keys(patch).length)await chrome.storage.local.set(patch);
+  await status(queued?'Note saved locally; it will sync with the highlight.':'Note saved to your dashboard.');
+  return {ok:true};
+ });}
  if(m.type==='zotero'&&trusted){const clips=await client.list(m.page);let count=0;for(const c of clips){const z=await zoteroMatch(c,await read());if(z){await client.update(c.id,{zotero:z});if(z.status==='matched')count++;}}return {count};}
  throw Error('Unsupported action');
  })().then(respond).catch(e=>respond({error:e.message}));return true;});
