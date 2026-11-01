@@ -91,6 +91,26 @@ var Client = class {
   }
 };
 
+// shared/table.js
+function tableGrid(t) {
+  const grid = [];
+  t.rows.forEach((row, r) => {
+    var _a;
+    grid[r] ?? (grid[r] = []);
+    let c = 0;
+    for (const cell of row) {
+      while (grid[r][c] !== void 0) c++;
+      for (let i = 0; i < (cell.rs || 1); i++) for (let j = 0; j < (cell.cs || 1); j++) {
+        grid[_a = r + i] ?? (grid[_a] = []);
+        grid[r + i][c + j] = i === 0 && j === 0 ? cell.t : "";
+      }
+      c += cell.cs || 1;
+    }
+  });
+  const width = Math.max(0, ...grid.map((r) => r.length));
+  return grid.map((r) => Array.from({ length: width }, (_, i) => r[i] ?? ""));
+}
+
 // shared/markdown.js
 function escape(v = "") {
   return String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/([\\`*_[\]#])/g, "\\$1");
@@ -103,11 +123,21 @@ function url(v) {
     return "";
   }
 }
+function mdTable(t) {
+  const g = tableGrid(t);
+  if (!g.length || !g[0].length) return "";
+  const row = (r) => "| " + r.map((x) => escape(x).replace(/\|/g, "\\|")).join(" | ") + " |";
+  return (t.caption ? "**" + escape(t.caption) + "**\n\n" : "") + [row(g[0]), "| " + g[0].map(() => "---").join(" | ") + " |", ...g.slice(1).map(row)].join("\n");
+}
+function excerpt(c) {
+  const t = c.anchor.table && Array.isArray(c.anchor.table.rows) ? mdTable(c.anchor.table) : "";
+  return t || "> " + escape(c.anchor.exact).replace(/\n/g, "\n> ");
+}
 function markdown(c, link) {
   return `<!-- excerptide:start -->
 # ${escape(c.title)}
 
-> ${escape(c.anchor.exact).replace(/\n/g, "\n> ")}
+${excerpt(c)}
 
 [Go to highlight](<${url(link)}>) \xB7 [Original source](<${url(c.original_url)}>)
 
@@ -213,11 +243,17 @@ var Settings = class extends import_obsidian.PluginSettingTab {
     el.createEl("h2", { text: "Excerptide Sync" });
     el.createEl("p", { text: "Sign in using your dashboard account. Sync imports clippings every minute while Obsidian is open. Paper titles are used as filenames. Write below \u201CMy notes\u201D; if you edit the imported excerpt itself, sync preserves that file rather than overwriting it. Local notes are never deleted by sync." });
     el.createEl("p", { text: "Session tokens are stored in this plugin\u2019s local data.json. Do not publish or share that file. Use a publishable Supabase key only." });
-    for (const [key, label] of [["url", "Supabase URL"], ["key", "Publishable key"], ["folder", "Vault folder"]]) new import_obsidian.Setting(el).setName(label).addText((t) => t.setValue(p.settings[key]).onChange(async (v) => {
-      if (key !== "folder") delete p.settings.session;
-      p.settings[key] = v.trim();
-      await p.saveData(p.settings);
-    }));
+    for (const [key, label] of [["url", "Supabase URL (advanced)"], ["key", "Publishable key (advanced)"], ["folder", "Vault folder"]]) new import_obsidian.Setting(el).setName(label).addText((t) => {
+      const builtIn = key !== "folder" && p.settings[key] === defaults[key];
+      if (key === "key") t.inputEl.type = "password";
+      if (key !== "folder") t.setPlaceholder("Built-in connection (leave blank)");
+      t.setValue(builtIn ? "" : p.settings[key]).onChange(async (v) => {
+        const next = v.trim() || (key === "folder" ? "" : defaults[key]);
+        if (key !== "folder" && next !== p.settings[key]) delete p.settings.session;
+        p.settings[key] = next;
+        await p.saveData(p.settings);
+      });
+    });
     let email = "", password = "";
     new import_obsidian.Setting(el).setName("Email").addText((t) => {
       t.inputEl.type = "email";
