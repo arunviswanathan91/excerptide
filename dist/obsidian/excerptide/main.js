@@ -31,6 +31,13 @@ function highlightLink(c) {
   u.hash = `excerptide=${c.id}`;
   return u.href;
 }
+var SessionExpiredError = class extends Error {
+  constructor() {
+    super("Your Excerptide sign-in has expired. Open Excerptide and sign in again; your queued clippings are kept.");
+    this.code = "session_expired";
+  }
+};
+var dead = (e) => [400, 401, 403].includes(e?.status) && /refresh_token_not_found|refresh_token_already_used|session_not_found|session_expired|invalid_grant|Invalid Refresh Token/i.test(e.body || "");
 var Client = class {
   constructor(read, write, request = (...args) => globalThis.fetch(...args)) {
     this.read = read;
@@ -42,23 +49,42 @@ var Client = class {
     const url2 = s.url || defaults.url;
     if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(url2)) throw Error("Use an HTTPS Supabase project URL without a trailing slash");
     const r = await this.request(url2 + path, { signal: AbortSignal.timeout(2e4), ...init, headers: { apikey: s.key || defaults.key, "Content-Type": "application/json", ...init.headers } });
-    if (!r.ok) throw Error(`Request failed (${r.status}): ${(await r.text()).slice(0, 250)}`);
+    if (!r.ok) {
+      const body = (await r.text()).slice(0, 250);
+      const e = Error(`Request failed (${r.status}): ${body}`);
+      e.status = r.status;
+      e.body = body;
+      throw e;
+    }
     return r.status === 204 ? null : r.json();
   }
   async login(email, password) {
     const session = await this.raw("/auth/v1/token?grant_type=password", { method: "POST", body: JSON.stringify({ email, password }) });
-    await this.write({ ...await this.read(), session: { ...session, expires_at: Date.now() / 1e3 + session.expires_in } });
+    const { expired, ...rest } = await this.read();
+    await this.write({ ...rest, session: { ...session, expires_at: Date.now() / 1e3 + session.expires_in } });
   }
   async token() {
     const s = await this.read();
-    if (!s.session) throw Error("Sign in to Excerptide first");
+    if (!s.session) throw s.expired ? new SessionExpiredError() : Error("Sign in to Excerptide first");
     if (s.session.expires_at > Date.now() / 1e3 + 60) return s.session.access_token;
-    if (!this.refreshing) this.refreshing = (async () => {
-      const v = await this.raw("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: s.session.refresh_token }) });
+    if (!this.refreshing) this.refreshing = this.renew(s.session).finally(() => this.refreshing = null);
+    return this.refreshing;
+  }
+  async renew(old) {
+    try {
+      const v = await this.raw("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: old.refresh_token }) });
       await this.write({ ...await this.read(), session: { ...v, expires_at: Date.now() / 1e3 + v.expires_in } });
       return v.access_token;
-    })().finally(() => this.refreshing = null);
-    return this.refreshing;
+    } catch (e) {
+      if (!dead(e)) throw e;
+      const now = await this.read(), cur = now.session;
+      if (cur && cur.refresh_token !== old.refresh_token && cur.expires_at > Date.now() / 1e3 + 60) return cur.access_token;
+      if (cur && cur.refresh_token === old.refresh_token) {
+        const { session, ...rest } = now;
+        await this.write({ ...rest, expired: { userId: session.user?.id, email: session.user?.email, at: Date.now() } });
+      }
+      throw new SessionExpiredError();
+    }
   }
   async api(query = "", init = {}) {
     return this.raw("/rest/v1/clippings" + query, { ...init, headers: { Authorization: "Bearer " + await this.token(), Prefer: "return=representation", ...init.headers } });
@@ -82,10 +108,13 @@ var Client = class {
   }
   async logout() {
     try {
-      await this.raw("/auth/v1/logout", { method: "POST", headers: { Authorization: "Bearer " + await this.token() } });
+      const s = await this.read();
+      if (s.session && s.session.expires_at > Date.now() / 1e3 + 60) await this.raw("/auth/v1/logout?scope=local", { method: "POST", headers: { Authorization: "Bearer " + s.session.access_token } });
+    } catch {
     } finally {
       const s = await this.read();
       delete s.session;
+      delete s.expired;
       await this.write(s);
     }
   }
@@ -224,7 +253,7 @@ var Excerptide = class extends import_obsidian.Plugin {
       if (oldFolder && Array.isArray(oldFolder.children) && oldFolder.children.length === 0) await this.app.vault.delete(oldFolder);
       if (notify) new import_obsidian.Notice(`Excerptide: ${count} clippings synced.${skipped ? " " + skipped + " locally edited notes preserved without overwriting." : " Your notes were preserved."}`);
     } catch (e) {
-      if (notify) new import_obsidian.Notice(e.message);
+      if (notify || e.code === "session_expired") new import_obsidian.Notice(e.message);
       console.warn("Excerptide sync failed");
     } finally {
       this.syncing = false;
@@ -241,6 +270,7 @@ var Settings = class extends import_obsidian.PluginSettingTab {
     const { containerEl: el } = this;
     el.empty();
     el.createEl("h2", { text: "Excerptide Sync" });
+    if (p.settings.expired && !p.settings.session) el.createEl("p", { text: "Your sign-in expired. Sign in again below; nothing is lost." });
     el.createEl("p", { text: "Sign in using your dashboard account. Sync imports clippings every minute while Obsidian is open. Paper titles are used as filenames. Write below \u201CMy notes\u201D; if you edit the imported excerpt itself, sync preserves that file rather than overwriting it. Local notes are never deleted by sync." });
     el.createEl("p", { text: "Session tokens are stored in this plugin\u2019s local data.json. Do not publish or share that file. Use a publishable Supabase key only." });
     for (const [key, label] of [["url", "Supabase URL (advanced)"], ["key", "Publishable key (advanced)"], ["folder", "Vault folder"]]) new import_obsidian.Setting(el).setName(label).addText((t) => {

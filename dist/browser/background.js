@@ -5,6 +5,13 @@ function pageKey(url) {
   u.hash = "";
   return u.href;
 }
+var SessionExpiredError = class extends Error {
+  constructor() {
+    super("Your Excerptide sign-in has expired. Open Excerptide and sign in again; your queued clippings are kept.");
+    this.code = "session_expired";
+  }
+};
+var dead = (e) => [400, 401, 403].includes(e?.status) && /refresh_token_not_found|refresh_token_already_used|session_not_found|session_expired|invalid_grant|Invalid Refresh Token/i.test(e.body || "");
 var Client = class {
   constructor(read2, write2, request = (...args) => globalThis.fetch(...args)) {
     this.read = read2;
@@ -16,23 +23,42 @@ var Client = class {
     const url = s.url || defaults.url;
     if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(url)) throw Error("Use an HTTPS Supabase project URL without a trailing slash");
     const r = await this.request(url + path, { signal: AbortSignal.timeout(2e4), ...init, headers: { apikey: s.key || defaults.key, "Content-Type": "application/json", ...init.headers } });
-    if (!r.ok) throw Error(`Request failed (${r.status}): ${(await r.text()).slice(0, 250)}`);
+    if (!r.ok) {
+      const body = (await r.text()).slice(0, 250);
+      const e = Error(`Request failed (${r.status}): ${body}`);
+      e.status = r.status;
+      e.body = body;
+      throw e;
+    }
     return r.status === 204 ? null : r.json();
   }
   async login(email, password) {
     const session = await this.raw("/auth/v1/token?grant_type=password", { method: "POST", body: JSON.stringify({ email, password }) });
-    await this.write({ ...await this.read(), session: { ...session, expires_at: Date.now() / 1e3 + session.expires_in } });
+    const { expired, ...rest } = await this.read();
+    await this.write({ ...rest, session: { ...session, expires_at: Date.now() / 1e3 + session.expires_in } });
   }
   async token() {
     const s = await this.read();
-    if (!s.session) throw Error("Sign in to Excerptide first");
+    if (!s.session) throw s.expired ? new SessionExpiredError() : Error("Sign in to Excerptide first");
     if (s.session.expires_at > Date.now() / 1e3 + 60) return s.session.access_token;
-    if (!this.refreshing) this.refreshing = (async () => {
-      const v = await this.raw("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: s.session.refresh_token }) });
+    if (!this.refreshing) this.refreshing = this.renew(s.session).finally(() => this.refreshing = null);
+    return this.refreshing;
+  }
+  async renew(old) {
+    try {
+      const v = await this.raw("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: old.refresh_token }) });
       await this.write({ ...await this.read(), session: { ...v, expires_at: Date.now() / 1e3 + v.expires_in } });
       return v.access_token;
-    })().finally(() => this.refreshing = null);
-    return this.refreshing;
+    } catch (e) {
+      if (!dead(e)) throw e;
+      const now = await this.read(), cur = now.session;
+      if (cur && cur.refresh_token !== old.refresh_token && cur.expires_at > Date.now() / 1e3 + 60) return cur.access_token;
+      if (cur && cur.refresh_token === old.refresh_token) {
+        const { session, ...rest } = now;
+        await this.write({ ...rest, expired: { userId: session.user?.id, email: session.user?.email, at: Date.now() } });
+      }
+      throw new SessionExpiredError();
+    }
   }
   async api(query = "", init = {}) {
     return this.raw("/rest/v1/clippings" + query, { ...init, headers: { Authorization: "Bearer " + await this.token(), Prefer: "return=representation", ...init.headers } });
@@ -56,10 +82,13 @@ var Client = class {
   }
   async logout() {
     try {
-      await this.raw("/auth/v1/logout", { method: "POST", headers: { Authorization: "Bearer " + await this.token() } });
+      const s = await this.read();
+      if (s.session && s.session.expires_at > Date.now() / 1e3 + 60) await this.raw("/auth/v1/logout?scope=local", { method: "POST", headers: { Authorization: "Bearer " + s.session.access_token } });
+    } catch {
     } finally {
       const s = await this.read();
       delete s.session;
+      delete s.expired;
       await this.write(s);
     }
   }
@@ -142,7 +171,7 @@ async function sync() {
       await chrome.storage.local.set({ [key]: queue });
       await status("Clipping saved to Supabase. Refresh the dashboard or sync Obsidian.");
     } catch (e) {
-      await status("Clipping is queued locally. Sync failed: " + e.message, true);
+      await status(e.code === "session_expired" ? e.message + " " + queue.length + " clipping(s) are saved on this computer." : "Clipping is queued locally. Sync failed: " + e.message, true);
       break;
     }
     if (s.zoteroUser && s.zoteroKey) {
@@ -164,6 +193,8 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
     const trusted = sender.url?.startsWith(chrome.runtime.getURL(""));
     if (m.type === "login" && trusted) {
       await locked(() => client.login(m.email, m.password));
+      await status("Signed in.");
+      void locked(sync);
       return { ok: true };
     }
     if (m.type === "logout" && trusted) {
@@ -178,34 +209,36 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
       const url = (sender.tab ? sender.url : null) || m.url;
       if (!url) throw Error("No webpage");
       const s = await read();
-      if (!s.session) return { clips: [] };
+      const uid = s.session?.user.id ?? s.expired?.userId;
+      if (!uid) return { clips: [] };
       const p = pageKey(url);
-      const queue = (await chrome.storage.local.get("queue:" + s.session.user.id))["queue:" + s.session.user.id] || [];
+      const queue = (await chrome.storage.local.get("queue:" + uid))["queue:" + uid] || [];
       let clips = [];
       try {
         clips = await client.list(p);
-        await chrome.storage.local.set({ ["cache:" + s.session.user.id + ":" + p]: clips });
+        await chrome.storage.local.set({ ["cache:" + uid + ":" + p]: clips });
       } catch (e) {
-        clips = (await chrome.storage.local.get("cache:" + s.session.user.id + ":" + p))["cache:" + s.session.user.id + ":" + p] || [];
+        clips = (await chrome.storage.local.get("cache:" + uid + ":" + p))["cache:" + uid + ":" + p] || [];
       }
       return { clips: [...new Map([...clips, ...queue.filter((c) => c.page_key === p)].map((c) => [c.id, c])).values()] };
     }
     if (m.type === "save" && sender.tab) {
       return locked(async () => {
         const s = await read();
-        if (!s.session) throw Error("Open Excerptide and sign in first");
+        const uid = s.session?.user.id ?? s.expired?.userId;
+        if (!uid) throw Error("Open Excerptide and sign in first");
         const c = m.clip;
         if (!c?.anchor?.exact || c.anchor.exact.length > 1e5) throw Error("Invalid or excessively long selection");
         if (pageKey(c.original_url) !== pageKey(sender.url)) throw Error("Page changed; select the passage again");
         c.id = crypto.randomUUID();
         c.page_key = pageKey(c.original_url);
         c.created_at = (/* @__PURE__ */ new Date()).toISOString();
-        c.user_id = s.session.user.id;
-        const key = "queue:" + s.session.user.id;
+        c.user_id = uid;
+        const key = "queue:" + uid;
         const q = (await chrome.storage.local.get(key))[key] || [];
         q.push(c);
         await chrome.storage.local.set({ [key]: q });
-        await status("Highlight queued locally; syncing\u2026");
+        await status(s.session ? "Highlight queued locally; syncing\u2026" : "Highlight saved on this computer. Your sign-in expired: open Excerptide and sign in again to sync it.", !s.session);
         void locked(sync);
         return { clip: c, pending: true };
       });
@@ -214,7 +247,7 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
       return locked(async () => {
         if (!/^[0-9a-f-]{36}$/i.test(m.id || "")) throw Error("Invalid clipping ID");
         const s = await read();
-        if (!s.session) throw Error("Sign in to delete this highlight");
+        if (!s.session) throw Error(s.expired ? "Your sign-in expired. Open Excerptide and sign in again to delete this highlight." : "Sign in to delete this highlight");
         const page = pageKey(sender.tab ? sender.url : m.url);
         const key = "queue:" + s.session.user.id;
         await client.api("?id=eq." + encodeURIComponent(m.id) + "&page_key=eq." + encodeURIComponent(page), { method: "DELETE" });
@@ -235,7 +268,7 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
         if (!/^[0-9a-f-]{36}$/i.test(m.id || "")) throw Error("Invalid clipping ID");
         if (typeof m.notes !== "string" || m.notes.length > 1e4) throw Error("Note must be text under 10,000 characters");
         const s = await read();
-        if (!s.session) throw Error("Sign in to save a note");
+        if (!s.session) throw Error(s.expired ? "Your sign-in expired. Open Excerptide and sign in again to save this note." : "Sign in to save a note");
         const key = "queue:" + s.session.user.id;
         const queue = (await chrome.storage.local.get(key))[key] || [];
         const queued = queue.some((c) => c.id === m.id);

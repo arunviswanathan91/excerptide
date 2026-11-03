@@ -12,6 +12,14 @@ async function render() {
   $("login").hidden = !!s.session;
   $("signed").hidden = !s.session;
   $("account").textContent = s.session?.user.email || "";
+  const note = $("expired");
+  if (!s.session && s.expired) {
+    const k = "queue:" + s.expired.userId;
+    const q = (await chrome.storage.local.get(k))[k] || [];
+    note.hidden = false;
+    note.textContent = "Your sign-in expired" + (s.expired.email ? " (" + s.expired.email + ")" : "") + ". Sign in again" + (q.length ? "; " + q.length + " clipping(s) saved on this computer will then upload." : ".");
+    if (s.expired.email && !$("email").value) $("email").value = s.expired.email;
+  } else note.hidden = true;
 }
 async function send(m) {
   $("status").textContent = "Working\u2026";

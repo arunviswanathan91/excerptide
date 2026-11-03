@@ -2,7 +2,7 @@
 
 **Highlight once. Keep it connected.**
 
-A Chrome/Edge extension and Obsidian plugin for research clippings, backed by the same Supabase account as your personal dashboard. Version 0.1.4 is an installable alpha, not yet a browser-store or Obsidian Community Plugins listing.
+A Chrome/Edge extension and Obsidian plugin for research clippings, backed by the same Supabase account as your personal dashboard. Version 0.1.5 is an installable alpha, not yet a browser-store or Obsidian Community Plugins listing.
 
 ## Install — no build required
 
@@ -92,3 +92,7 @@ Click an existing webpage highlight to show **Delete highlight**, or open the ex
 ## Notes and tables
 
 After you highlight, a small box offers an optional note. Notes are saved to the dashboard (and imported into Obsidian) and are never shown on the web page. Click an existing highlight to add or edit its note. Selecting across two or more table cells, or a whole table, saves the table itself as structured cells (shown as a table in the dashboard and a Markdown table in Obsidian) instead of jumbled text; a selection inside one cell stays a normal text highlight. Figures are not captured.
+
+## If syncing stops: expired sign-in
+
+Version 0.1.5 handles a login that the server no longer recognises (for example after signing out everywhere, a password change, or an expired session). Instead of retrying silently, the extension forgets the dead login, shows a red `!` badge and a notice in the popup (“Your sign-in expired”), and keeps working locally: new highlights are saved on this computer and existing ones still show on pages. Sign in again with the same account and everything waiting uploads straight away. The same notice appears in Obsidian. **Sign out** in the extension and in Obsidian now signs out this device only, so it no longer logs you out of the dashboard, the other client, or your phone. (The dashboard’s own Sign out was changed the same way.)

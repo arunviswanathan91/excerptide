@@ -35,13 +35,13 @@ export default class Excerptide extends Plugin {
    const oldFolder=this.app.vault.getAbstractFileByPath(normalizePath(folder+'/'+owner));
    if(oldFolder&&Array.isArray(oldFolder.children)&&oldFolder.children.length===0)await this.app.vault.delete(oldFolder);
    if(notify)new Notice(`Excerptide: ${count} clippings synced.${skipped?' '+skipped+' locally edited notes preserved without overwriting.':' Your notes were preserved.'}`);
-  }catch(e){if(notify)new Notice(e.message);console.warn('Excerptide sync failed');}finally{this.syncing=false;}
+  }catch(e){if(notify||e.code==='session_expired')new Notice(e.message);console.warn('Excerptide sync failed');}finally{this.syncing=false;}
  }
 
 }
 class Settings extends PluginSettingTab {
  constructor(app,plugin){super(app,plugin);this.plugin=plugin;}
- display(){const p=this.plugin;const {containerEl:el}=this;el.empty();el.createEl('h2',{text:'Excerptide Sync'});el.createEl('p',{text:'Sign in using your dashboard account. Sync imports clippings every minute while Obsidian is open. Paper titles are used as filenames. Write below “My notes”; if you edit the imported excerpt itself, sync preserves that file rather than overwriting it. Local notes are never deleted by sync.'});el.createEl('p',{text:'Session tokens are stored in this plugin’s local data.json. Do not publish or share that file. Use a publishable Supabase key only.'});
+ display(){const p=this.plugin;const {containerEl:el}=this;el.empty();el.createEl('h2',{text:'Excerptide Sync'});if(p.settings.expired&&!p.settings.session)el.createEl('p',{text:'Your sign-in expired. Sign in again below; nothing is lost.'});el.createEl('p',{text:'Sign in using your dashboard account. Sync imports clippings every minute while Obsidian is open. Paper titles are used as filenames. Write below “My notes”; if you edit the imported excerpt itself, sync preserves that file rather than overwriting it. Local notes are never deleted by sync.'});el.createEl('p',{text:'Session tokens are stored in this plugin’s local data.json. Do not publish or share that file. Use a publishable Supabase key only.'});
  for(const [key,label] of [['url','Supabase URL (advanced)'],['key','Publishable key (advanced)'],['folder','Vault folder']])new Setting(el).setName(label).addText(t=>{const builtIn=key!=='folder'&&p.settings[key]===defaults[key];if(key==='key')t.inputEl.type='password';if(key!=='folder')t.setPlaceholder('Built-in connection (leave blank)');t.setValue(builtIn?'':p.settings[key]).onChange(async v=>{const next=v.trim()||(key==='folder'?'':defaults[key]);if(key!=='folder'&&next!==p.settings[key])delete p.settings.session;p.settings[key]=next;await p.saveData(p.settings);});});
  let email='',password='';new Setting(el).setName('Email').addText(t=>{t.inputEl.type='email';t.setPlaceholder('Dashboard email').onChange(v=>email=v);});
  new Setting(el).setName('Password').addText(t=>{t.inputEl.type='password';t.onChange(v=>password=v);});
